@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>oppadrama-api — Uji Player</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#14161a; color:#e8e8e8;
+         font-family: system-ui, -apple-system, Segoe UI, sans-serif; }
+  header { padding:14px 18px; background:#1c1f26; border-bottom:1px solid #2a2f39; }
+  h1 { margin:0; font-size:16px; font-weight:600; }
+  h1 small { color:#8b93a1; font-weight:400; }
+  main { max-width: 960px; margin: 0 auto; padding: 18px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  input, select, button {
+    background:#1c1f26; color:#e8e8e8; border:1px solid #2f3540;
+    border-radius:8px; padding:9px 12px; font-size:14px; font-family:inherit;
+  }
+  input { flex:1 1 320px; }
+  button { cursor:pointer; background:#2563eb; border-color:#2563eb; font-weight:600; }
+  button:hover { background:#1d4ed8; }
+  button.ghost { background:#1c1f26; border-color:#2f3540; font-weight:500; }
+  video { width:100%; aspect-ratio:16/9; background:#000; border-radius:10px;
+          border:1px solid #2a2f39; }
+  .status { margin-top:10px; padding:10px 12px; border-radius:8px; background:#1c1f26;
+            border:1px solid #2a2f39; font-size:13px; line-height:1.5;
+            white-space:pre-wrap; word-break:break-all; }
+  .ok { color:#4ade80 } .err { color:#f87171 } .dim { color:#8b93a1 }
+  a { color:#60a5fa }
+</style>
+</head>
+<body>
+<header>
+  <h1>oppadrama-api <small>— uji player HLS</small></h1>
+</header>
+<main>
+  <div class="row">
+    <input id="slug" value="100-days-of-deception-episode-4"
+           placeholder="slug episode, mis. 100-days-of-deception-episode-4">
+    <select id="server"><option value="">server: default</option></select>
+    <button id="load">Muat Stream</button>
+    <button id="raw" class="ghost">Ambil JSON</button>
+  </div>
+  <video id="v" controls playsinline></video>
+  <div class="status" id="status"><span class="dim">Masukkan slug episode lalu klik “Muat Stream”.</span></div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+<script>
+// Base path API: buang segmen /player, /player/, atau /player.html.
+const API = location.pathname
+  .replace(/\/player(\.html)?\/?$/, '')
+  .replace(/\/$/, '');
+const $ = (id) => document.getElementById(id);
+let hls = null;
+
+function log(html) { $('status').innerHTML = html; }
+
+async function fetchStream(slug, server) {
+  const url = `${API}/episode/${encodeURIComponent(slug)}/stream` +
+              (server ? `?server=${encodeURIComponent(server)}` : '');
+  const res = await fetch(url);
+  const json = await res.json();
+  if (!json.success) throw new Error(json.message || 'Gagal memuat stream');
+  return json.data;
+}
+
+function play(data) {
+  const src = API + (data.masterProxyUrl || (data.qualities[0] && data.qualities[0].proxyUrl));
+  const video = $('v');
+  if (hls) { hls.destroy(); hls = null; }
+
+  if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = src;                              // Safari / iOS native HLS
+    log(`<span class="ok">✓ Native HLS</span>\n${src}`);
+  } else if (window.Hls && Hls.isSupported()) {
+    hls = new Hls({ enableWorker: true });
+    hls.loadSource(src);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      log(`<span class="ok">✓ hls.js siap</span> — ${data.qualityLabels.join(', ') || '-'}\n` +
+          `master: ${src}\nsegmen via ${API}/stream/seg`);
+    });
+    hls.on(Hls.Events.ERROR, (_, d) => {
+      if (d.fatal) log(`<span class="err">✗ hls.js error: ${d.details}</span>\n${src}`);
+    });
+  } else {
+    video.src = src;
+    log(`<span class="err">Browser tanpa dukungan HLS — coba Safari.</span>`);
+  }
+  video.play().catch(() => {});
+}
+
+on('load', async () => {
+  const slug = $('slug').value.trim();
+  if (!slug) return;
+  log('<span class="dim">Memuat…</span>');
+  try {
+    const data = await fetchStream(slug, $('server').value);
+    const sel = $('server');
+    sel.innerHTML = '<option value="">server: default</option>' +
+      (data.servers || []).map(s =>
+        `<option value="${s.index}">${s.index}. ${s.name}</option>`).join('');
+    play(data);
+  } catch (e) {
+    log(`<span class="err">✗ ${e.message}</span>`);
+  }
+});
+
+on('raw', async () => {
+  const slug = $('slug').value.trim();
+  if (!slug) return;
+  log('<span class="dim">Memuat JSON…</span>');
+  try {
+    const data = await fetchStream(slug, $('server').value);
+    log(JSON.stringify(data, null, 2));
+  } catch (e) { log(`<span class="err">✗ ${e.message}</span>`); }
+});
+
+$('load').addEventListener('click', () => window.dispatchEvent(new Event('load')));
+$('raw').addEventListener('click', () => window.dispatchEvent(new Event('raw')));
+$('server').addEventListener('change', () => window.dispatchEvent(new Event('load')));
+
+function on(name, fn) { window.addEventListener(name, fn); }
+</script>
+</body>
+</html>
